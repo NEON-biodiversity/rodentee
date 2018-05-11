@@ -1,0 +1,119 @@
+---
+title: "NEON rodent energy equivalence"
+author: "Quentin D. Read"
+date: "May 11, 2018"
+output: pdf_document
+---
+
+# Pull data from NEON
+
+The code here will pull the data from NEON or you can pull it once, save it locally as a CSV, then load that CSV each time which is better because it takes a few minutes to download each time.
+
+```{r, eval=FALSE}
+# Source functions to pull data
+source('~/GitHub/NEON/code/data_extraction/datapull_neonapi_fns.r')
+
+# Codes for mammal and bird data
+mammal_code <- 'DP1.10072.001'
+bird_code <- 'DP1.10003.001'
+
+# Pull all mammal data
+mammal_data <- pull_all_neon_data(productCode = mammal_code, 
+                                  nametag = 'pertrapnight')
+```
+
+```{r, echo=FALSE, message=FALSE}
+# Loaded from already-pulled CSV.
+mammal_data <- read.csv('', stringsAsFactors = FALSE)
+```
+
+# Define function for binning
+
+Ethan White's log binning algorithm, same as we used previously.
+
+```{r}
+logbin_setedges <- function(x, y = NULL, edges) {
+  logx <- log10(x)                                           # log transform x value (biomass)
+  bin_edges <- log10(c(edges$bin_min, edges$bin_max[length(edges$bin_max)]))
+  n <- length(edges$bin_min)
+  logxbin <- rep(NA, length(logx))                           # create data structure to assign trees to bins
+  b <- bin_edges                                             # add a little to the biggest bin temporarily
+  b[length(b)] <- b[length(b)] + 1                           # (so that the biggest single tree is put in a bin)
+  for (i in 1:length(logx)) {
+    logxbin[i] <- sum(logx[i] >= b)                          # assign each tree to a bin
+  }
+  bin_midpoints <- edges$bin_midpoint
+  bin_widths <- diff(10^bin_edges)                           # get linear width of each bin
+  bin_factor <- factor(logxbin, levels=1:n)                  # convert bin to factor (required to deal with zeroes if present)
+  bin_counts <- table(bin_factor)                            # find number of trees in each bin
+  if (!is.null(y)) {
+    rawy <- tapply(y, bin_factor, sum)                       # sum y value (production) in each bin
+    rawy[is.na(rawy)] <- 0                                   # add zeroes back in if present
+    bin_values <- as.numeric(rawy/bin_widths)                # divide production by width for each bin 
+  }
+  else {
+    bin_values <- as.numeric(bin_counts/bin_widths)          # 1-dimensional case.
+  }
+  
+  return(data.frame(bin_midpoint = bin_midpoints,            # return result!
+                    bin_value = bin_values,                  # also add bin min and max for bar plot purposes
+                    bin_count = as.numeric(bin_counts),
+                    bin_min = 10^bin_edges[1:n],
+                    bin_max = 10^bin_edges[2:(n+1)]))
+  
+}
+
+```
+
+# Data processing
+
+Get rid of all instances where an individual is sampled multiple times.
+
+```{r}
+
+```
+
+Pool all sampling bouts from one site and year together (individual plots and bouts from each site are all lumped).
+
+```{r}
+
+```
+
+Create a rough guess for relative metabolic rate (energy flux) by taking $mass^{frac{3}{4}}$ for each individual.
+
+```{r}
+
+```
+
+# Binning
+
+Pool all the measurements together to figure out what appropriate bounds are for the bins and how many there should be.
+
+```{r}
+
+```
+
+Use the log-binning algorithm to bin each site's body mass measurements based on the bin bounds we just determined.
+
+```{r}
+
+```
+
+Use the bin ID for each body mass bin to sum the energy flux for each bin at each site.
+
+```{r}
+
+```
+
+Make a plot, by site, of binned body mass.
+
+```{r}
+
+```
+
+Make a plot, by site, of binned (relative) total energy flux (assuming each individual has a metabolic rate exactly proportional to 3/4 power of its mass).
+
+```{r}
+
+```
+
