@@ -54,7 +54,7 @@ mammal_data <- read.csv('C:/Users/Q/google_drive/NEON_EAGER/Manuscript5_RodentEE
 
 # Data processing
 
-Get rid of all recaptures and all juveniles. Other than that do no other quality control for now. Probably a good idea to look back through later and get rid of odd outliers. I chose to do 2016 for this analysis because it has the most data (about 10000 individuals). Get rid of any row without weight (leaving 7000 rows). Also keep only the columns we care about for the moment. 
+Get rid of all recaptures and all juveniles. Other than that do no other quality control for now. Probably a good idea to look back through later and get rid of odd outliers. I chose to do 2016 for this analysis because it has the most data (about 10000 individuals). Get rid of any row without weight (leaving ~8000 rows). Also keep only the columns we care about for the moment. 
 
 ```{r, message = FALSE}
 library(dplyr)
@@ -62,7 +62,7 @@ library(lubridate)
 
 mammal_data <- mammal_data %>%
   filter(!recapture %in% c('U','Y')) %>%
-  filter(!lifeStage %in% c('juvenile')) %>%
+  #filter(!lifeStage %in% c('juvenile')) %>%
   mutate(month = month(collectDate), year = year(collectDate)) %>%
   filter(year == 2016, !is.na(weight)) %>%
   select(domainID, siteID, plotID, collectDate, month, year, taxonID, lifeStage, weight)
@@ -135,6 +135,17 @@ energy_bins %>%
 ggplot(aes(x = bin_midpoint, y = bin_value)) + 
   facet_wrap(~ siteID) +
   theme_bw() + geom_line() + geom_point() +
-  scale_x_log10() + scale_y_log10()
+  scale_x_log10(name = 'Mass (g)') + scale_y_log10(name = 'Total relative energy')
+```
+
+Boxplot showing distributions of nonzero bin values across sites.
+
+```{r}
+energy_bins %>% 
+  filter(siteID %in% n_individuals$siteID) %>%
+  ggplot(aes(x = bin_midpoint, y = bin_value)) +
+  stat_boxplot(aes(group = bin_midpoint)) +
+  scale_x_log10(name = 'Mass (g)') + scale_y_log10(name = 'Total relative energy') +
+  theme_bw()
 ```
 
