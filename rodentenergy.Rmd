@@ -149,3 +149,49 @@ energy_bins %>%
   theme_bw()
 ```
 
+# Binning by species richness
+
+I modified the log binning function to get the number of species in each bin rather than the total energy. This does not use the mean value by species but the mass value for each individual. Therefore a species could be counted in multiple bins.
+
+```{r}
+logbin_categorical <- function(x, y, bin_edges) {
+  xbin <- cut(x, breaks = bin_edges, include.lowest = TRUE)
+  data.frame(x, y, xbin) %>%
+    group_by(xbin) %>%
+    summarize(richness = length(unique(y)))
+}
+```
+
+Here the binning is done.
+
+```{r}
+bin_mids <- exp(log(bin_bounds)[-1] - diff(log(bin_bounds))/2)
+
+mammal_richness_bins <- mammal_data %>%
+  group_by(siteID) %>%
+  do(logbin_categorical(x = .$weight, y = .$taxonID, bin_edges = bin_bounds))
+```
+
+Plots separated by site (species richness on the y axis is not on a log scale).
+
+```{r, warning = FALSE}
+mammal_richness_bins %>% 
+  mutate(bin_midpoint = bin_mids[as.numeric(xbin)]) %>%
+  filter(siteID %in% n_individuals$siteID) %>%
+  ggplot(aes(x = bin_midpoint, y = richness)) + 
+  facet_wrap(~ siteID) +
+  theme_bw() + geom_line() + geom_point() +
+  scale_x_log10(name = 'Mass (g)') + scale_y_continuous(name = 'Species richness')
+```
+
+Boxplot showing richness distribution for each bin across sites.
+
+```{r, warning = FALSE}
+mammal_richness_bins %>% 
+  mutate(bin_midpoint = bin_mids[as.numeric(xbin)]) %>%
+  filter(siteID %in% n_individuals$siteID) %>%
+  ggplot(aes(x = bin_midpoint, y = richness)) +
+  stat_boxplot(aes(group = bin_midpoint)) +
+  scale_x_log10(name = 'Mass (g)') + scale_y_continuous(name = 'Species richness') +
+  theme_bw()
+```
