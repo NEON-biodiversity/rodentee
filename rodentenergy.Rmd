@@ -54,7 +54,7 @@ mammal_data <- read.csv('C:/Users/Q/google_drive/NEON_EAGER/Manuscript5_RodentEE
 
 # Data processing
 
-Get rid of all recaptures and all juveniles. Other than that do no other quality control for now. Probably a good idea to look back through later and get rid of odd outliers. I chose to do 2016 for this analysis because it has the most data (about 10000 individuals). Get rid of any row without weight (leaving ~8000 rows). Also keep only the columns we care about for the moment. 
+Get rid of all recaptures. *Edit: originally I removed juveniles but they are included again. Only ~10% are juveniles.* Other than that do no other quality control for now. Probably a good idea to look back through later and get rid of odd outliers. I chose to do 2016 for this analysis because it has the most data (about 10000 individuals). Get rid of any row without weight (leaving ~8000 rows). Also keep only the columns we care about for the moment. 
 
 ```{r, message = FALSE}
 library(dplyr)
@@ -70,7 +70,7 @@ mammal_data <- mammal_data %>%
 
 ```
 
-Create a rough guess for relative metabolic rate (energy flux) by taking $mass^{frac{3}{4}}$ for each individual.
+Create a rough guess for relative metabolic rate (energy flux) by taking $mass^{\frac{3}{4}}$ for each individual.
 
 ```{r}
 mammal_data <- mammal_data %>%
