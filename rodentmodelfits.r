@@ -72,9 +72,9 @@ n_individuals <- mass_bins %>%
 
 
 #### 
-# Do all mammals' energy together in one for now.
+# Do all mammals' mass together in one for now.
 
-x <- mammal_data$relativeEnergy
+x <- mammal_data$weight
 
 # Specify stan model 1. (energy equivalence only; Pareto)
 
@@ -148,6 +148,56 @@ model2 <- '
       }
     }
   }
+'
+
+# Edited 11 June: stan model 2 with corrected breakpoint
+
+model2 <- '
+  data {
+int<lower=0> N;
+vector<lower=0>[N] x;
+real<lower=0> x_min;
+real<lower=0> x_max;
+}
+
+parameters {
+real<lower=0, upper=5> alpha_low;
+real<lower=0, upper=5> alpha_high;
+// Set x_opt to be uniform within reasonable boundaries
+real<lower=x_min, upper=x_max> x_opt;
+}
+
+transformed parameters {
+real<lower=0> x_min_high;
+x_min_high = ((alpha_low/alpha_high) * (x_min^alpha_low) * (x_opt^(alpha_high - alpha_low)))^(-alpha_high);
+}
+
+model {
+// Priors (truncated lognormal)
+// Do not set prior on x_opt for now.
+alpha_low ~ lognormal(1, 1) T[0, 5];
+alpha_high ~ lognormal(1, 1) T[0, 5];
+// Likelihood (power law)
+for (i in 1:N) {
+if (x[N] <= x_opt) {
+x[i] ~ pareto(x_min, alpha_low);
+} else {
+x[i] ~ pareto(x_min_high, alpha_high);
+}
+}
+}
+
+generated quantities {
+// Log-likelihood (needed for calculating info criteria)
+vector[N] log_lik;
+for (i in 1:N) {
+if (x[N] <= x_opt) {
+log_lik[i] = pareto_lpdf(x[i] | x_min, alpha_low);
+} else {
+log_lik[i] = pareto_lpdf(x[i] | x_min_high, alpha_high);
+}
+}
+}
 '
 
 # Stan model 2 with fixed optimum
@@ -248,7 +298,7 @@ stanmodel1 <- stan_model(model_code = model1)
 
 stanfit1 <- sampling(stanmodel1, data = standata, pars = c('alpha'), chains = 3, iter = 2000, warmup = 1000, seed = 919)
 
-summary(stanfit1)
+summary(stanfit1)$summary
 stanfit1_pars <- extract(stanfit1)
 mcmc_trace(as.array(stanfit1))
 
@@ -256,7 +306,7 @@ mcmc_trace(as.array(stanfit1))
 
 stanmodel2 <- stan_model(model_code = model2)
 
-stanfit2 <- sampling(stanmodel2, data = standata, pars = c('alpha_low', 'alpha_high', 'x_opt'), chains = 3, iter = 7000, warmup = 5000, seed = 574)
+stanfit2 <- sampling(stanmodel2, data = standata, pars = c('alpha_low', 'alpha_high', 'x_min_high', 'x_opt'), chains = 3, iter = 5000, warmup = 3000, seed = 33)
 
 summary(stanfit2)$summary
 stanfit2_pars <- extract(stanfit2)
