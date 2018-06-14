@@ -37,3 +37,6 @@ rsconnect/
 
 # PDF files rendered from Rmarkdown
 *.pdf
+
+# Stan compilation files
+*.rds
