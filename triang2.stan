@@ -4,11 +4,11 @@ functions {
 		real prob;
 		real lprob;
 		if (x < a) prob = 0;
-		if (x >= a && x < c) prob = 2*(log(x)-log(a))/((log(b)-log(a))*(log(c)-log(a)));
-		if (x == c) prob = 2/(log(b)-log(a));
-		if (x > c && x <= b) prob = 2*(log(b)-log(x))/((log(b)-log(a))*(log(b)-log(c)));
+		if (x >= a && x < c) prob = exp(2*(log(x)-log(a))/((log(b)-log(a))*(log(c)-log(a))));
+		if (x == c) prob = exp(2/(log(b)-log(a)));
+		if (x > c && x <= b) prob = exp(2*(log(b)-log(x))/((log(b)-log(a))*(log(b)-log(c))));
 		if (x > b) prob = 0;
-		lprob = prob;
+		lprob = log(prob);
 		return lprob;
 	}
 }
