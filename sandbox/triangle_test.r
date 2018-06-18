@@ -32,17 +32,14 @@ curve(exp(dtriangle(log(x), log(1), log(430), log(15))), from=1, to=430, log='xy
 stantri <- stan_model('~/GitHub/NEON_repos/rodentee/triang.stan')
 stantri <- stan_model('~/GitHub/NEON_repos/rodentee/triang2.stan')
 stantri <- stan_model('~/GitHub/NEON_repos/rodentee/triang_estall.stan')
+stantri <- stan_model('~/GitHub/NEON_repos/rodentee/triang_powerlaws.stan') # Version 18 June
 
 fittri <- sampling(stantri, data = standata, chains = 3, iter = 2000, warmup = 1000, seed = 50, pars = 'log_lik', include = FALSE)
 
 summary(fittri)$summary
 mcmc_trace(as.array(fittri))
 
-# With 
-fittri <- sampling(stantri, data = standata, chains = 3, iter = 2000, warmup = 1000, seed = 3, pars = 'log_lik', include = FALSE)
 
-summary(fittri)$summary
-mcmc_trace(as.array(fittri))
 
 # Check to see if slope works
 logtriangular_pdf <- function (x,a,b,c) {

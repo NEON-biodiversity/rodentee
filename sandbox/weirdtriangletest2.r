@@ -13,7 +13,6 @@ x_opt = 20
 xq <- function(alphalow, alphahigh, xopt) (xopt^(alphalow-2) * (alphahigh/alphalow))^(-1/alphalow)
 
 mypweirdtriangle <- function(x, x_opt, alpha_low, alpha_high) {
-  #x_low <- (x_opt^(alpha_low-2) * (alpha_high/alpha_low))^(-1/alpha_low)
   x_low <- ((alpha_high/alpha_low)^(-1/alpha_low))*x_opt
   p <- numeric(length(x))
   p[x < x_opt] <- alpha_low * x_low^(-alpha_low) / (x[x <= x_opt]^(-alpha_low+1))
