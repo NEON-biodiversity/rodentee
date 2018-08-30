@@ -32,7 +32,7 @@ logbin_setedges <- function(x, y = NULL, bin_edges) {
 }
 
 
-mammal_data <- read.csv('C:/Users/Q/google_drive/NEON_EAGER/Manuscript5_RodentEE/mammal_reduced.csv', stringsAsFactors = FALSE)
+mammal_data <- read.csv('~/google_drive/NEON_EAGER/Manuscript5_RodentEE/mammal_reduced.csv', stringsAsFactors = FALSE)
 
 library(dplyr)
 library(lubridate)

@@ -33,13 +33,20 @@ stantri <- stan_model('~/GitHub/NEON_repos/rodentee/triang.stan')
 stantri <- stan_model('~/GitHub/NEON_repos/rodentee/triang2.stan')
 stantri <- stan_model('~/GitHub/NEON_repos/rodentee/triang_estall.stan')
 stantri <- stan_model('~/GitHub/NEON_repos/rodentee/triang_powerlaws.stan') # Version 18 June
+stantri <- stan_model('~/Documents/GitHub/NEON_repos/rodentee/triang_continuous.stan') # Version 30 August
 
 fittri <- sampling(stantri, data = standata, chains = 3, iter = 2000, warmup = 1000, seed = 50, pars = 'log_lik', include = FALSE)
 
 summary(fittri)$summary
 mcmc_trace(as.array(fittri))
 
+stantrap <- stan_model('~/Documents/GitHub/NEON_repos/rodentee/threepart_continuous.stan') # Version 30 August
+# Needs many more iterations to converge.
 
+fittrap <- sampling(stantrap, data = standata, chains = 3, iter = 5000, warmup = 4000, seed = 2222, pars = 'log_lik', include = FALSE)
+
+summary(fittrap)$summary
+mcmc_trace(as.array(fittrap))
 
 # Check to see if slope works
 logtriangular_pdf <- function (x,a,b,c) {

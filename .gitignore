@@ -40,3 +40,4 @@ rsconnect/
 
 # Stan compilation files
 *.rds
+.Rproj.user
