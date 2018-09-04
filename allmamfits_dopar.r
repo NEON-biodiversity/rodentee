@@ -2,6 +2,11 @@
 # Does not need to be done in parallel for the moment because it runs fairly quickly.
 # QDR/NEON Rodents/31 Aug 2018
 
+
+
+# Load and process data ---------------------------------------------------
+
+
 library(rstan)
 library(bayesplot)
 library(loo)
@@ -72,6 +77,25 @@ energy_bins <- mammal_data %>%
   group_by(siteID, year) %>%
   do(logbin_setedges(x = .$weight, y = .$relativeEnergy, bin_edges = bin_bounds))
 
+
+# Look at where there are too few individuals. Get rid of anything less than 100 for now.
+n_individuals <- mammal_data %>%
+  group_by(siteID, year) %>%
+  summarize(n=n(), xmin = min(weight), xmax = max(weight))
+
+mammal2016 <- mammal_data %>%
+  left_join(n_individuals) %>%
+  filter(n >= 100, year == 2016)
+
+# Sum up total relative energy by site so the fits can be normalized
+total_energy <- mammal2016 %>%
+  group_by(siteID, year) %>%
+  summarize(total = sum(relativeEnergy))
+
+
+# Load stan models --------------------------------------------------------
+
+
 stanmod1 <- stan_model('~/Documents/GitHub/NEON_repos/rodentee/model_h1.stan') # Hypothesis 1: power law (global ee)
 stanmod2 <- stan_model('~/Documents/GitHub/NEON_repos/rodentee/model_h2.stan') # Hypothesis 2: peaked
 stanmod3 <- stan_model('~/Documents/GitHub/NEON_repos/rodentee/model_h3.stan') # Hypothesis 3: tail+EE+tail
@@ -108,15 +132,6 @@ fit_model <- function(dat, mod, ctrl = NULL, init = 'random') {
   sampling(mod, data = standata, chains = n_chain, iter = n_iter, warmup = n_warm, seed = random_seed, control = ctrl, init = init)
 }
 
-# Look at where there are too few individuals. Get rid of anything less than 100 for now.
-n_individuals <- mammal_data %>%
-  group_by(siteID, year) %>%
-  summarize(n=n(), xmin = min(weight))
-
-mammal2016 <- mammal_data %>%
-  left_join(n_individuals) %>%
-  filter(n >= 100, year == 2016)
-
 all_fits_mod1 <- mammal2016 %>%
   group_by(siteID, year) %>%
   do(fit = fit_model(., mod = stanmod1))
@@ -129,13 +144,18 @@ all_fits_mod3 <- mammal2016 %>%
   group_by(siteID, year) %>%
   do(fit = fit_model(., mod = stanmod3, ctrl = list(max_treedepth = 25, adapt_delta = 0.9), init = init_h3))
 
-
 # Refit some of the models that did not fit well the first time
 bad_mod2 <- c(2,5,12)
-bad_mod3 <- c(15,17)
+bad_mod3 <- c(15,16,17)
 
-n_iter <- 9000
+n_iter <- 10000
 n_warm <- 8000
+
+bad_mod2 <- c(2,12)
+bad_mod3 <- c(16,17)
+
+n_iter <- 20000
+n_warm <- 15000
 
 for (i in bad_mod2) {
   print(i)
@@ -154,9 +174,13 @@ for (i in bad_mod3) {
 # Get parameter values and CIs --------------------------------------------
 
 get_pars <- function(fit, parnames) {
-  summ <- summary(fit)$summary[parnames,,drop = FALSE]
-  data.frame(parameter = parnames, summ) %>%
-    setNames(c('parameter', 'mean', 'se_mean', 'sd', 'q025', 'q25', 'q50', 'q75', 'q975', 'n_eff', 'Rhat'))
+  summ <- try(summary(fit)$summary[parnames,,drop = FALSE], TRUE)
+  if (is.null(summ) | inherits(summ, 'try-error')) {
+    data.frame(parameter = parnames, mean = NA, se_mean = NA, sd = NA, q025 = NA, q25 = NA, q50 = NA, q75 = NA, q975 = NA, n_eff = NA, Rhat = NA)
+  } else {
+    data.frame(parameter = parnames, summ) %>%
+      setNames(c('parameter', 'mean', 'se_mean', 'sd', 'q025', 'q25', 'q50', 'q75', 'q975', 'n_eff', 'Rhat'))
+  }
 }
 
 all_pars1 <- all_fits_mod1 %>%
@@ -202,7 +226,7 @@ all_loo <- rbind(data.frame(model = 'H1', all_loo1),
 
 # Get fitted values from functions and their CIs --------------------------
 
-x_pred <- exp(seq(log(min(x)), log(max(x)), length.out = 51)) # Vector of x values to get fitted values
+x_pred <- exp(seq(log(min(mammal2016$weight)), log(max(mammal2016$weight)), length.out = 51)) # Vector of x values to get fitted values
 
 # Functions to return fitted value given function parameters
 pdf_mod1 <- function(x, xmin, alpha) (alpha * xmin^alpha) / (x ^ (alpha+1))
@@ -264,12 +288,24 @@ all_fitted <- rbind(data.frame(model = 'H1', all_fitted1),
                     data.frame(model = 'H3', all_fitted3))
 
 # Function to return *energy* quantiles
-get_fitted_energy_quant <- function(fit, parnames, pdf, n, xmin) {
+# Must normalize
+get_fitted_energy_quant <- function(fit, parnames, pdf, n, xmin, total_e) {
+  require(pracma)
   # Extract parameters
   pars <- as.data.frame(do.call('cbind', extract(fit, parnames)))
   # Get the number of individuals and the minimum value from the original data
   # Calculate fitted values
   fitted <- n * pmap_dfc(pars, pdf, x = x_pred, xmin =xmin) ^ 0.75
+  
+  # Integrate fitted total energy and multiply total energy fitted values by the 
+  # ratio of total observed energy and integral of fitted energy
+  # (Use trapezoidal integration)
+  fitted <- sapply(1:ncol(fitted), function(i) {
+    fitted_integral <- trapz(x = x_pred, y = fitted[,i])
+    fitted[,i] * total_e / fitted_integral
+  })
+  
+  
   # Get quantiles of fitted values
   qprobs <- c(0.025, 0.5, 0.975)
   fittedquant <- t(apply(fitted, 1, quantile, probs = qprobs))
@@ -282,56 +318,83 @@ all_fittedenergy1 <- all_fits_mod1 %>%
   group_by(siteID, year) %>%
   do(get_fitted_energy_quant(.$fit[[1]], parnames1, pdf_mod1, 
                    n = n_individuals$n[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]],
-                   xmin = n_individuals$xmin[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]]))
+                   xmin = n_individuals$xmin[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]],
+                   total_e = total_energy$total[total_energy$siteID==.$siteID[1] & total_energy$year==.$year[1]]))
 
 all_fittedenergy2 <- all_fits_mod2 %>%
   group_by(siteID, year) %>%
   do(get_fitted_energy_quant(.$fit[[1]], parnames2, pdf_mod2, 
                    n = n_individuals$n[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]],
-                   xmin = n_individuals$xmin[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]]))
+                   xmin = n_individuals$xmin[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]],
+                   total_e = total_energy$total[total_energy$siteID==.$siteID[1] & total_energy$year==.$year[1]]))
 
 all_fittedenergy3 <- all_fits_mod3 %>%
   group_by(siteID, year) %>%
   do(get_fitted_energy_quant(.$fit[[1]], parnames3, pdf_mod3, 
                    n = n_individuals$n[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]],
-                   xmin = n_individuals$xmin[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]]))
+                   xmin = n_individuals$xmin[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]],
+                   total_e = total_energy$total[total_energy$siteID==.$siteID[1] & total_energy$year==.$year[1]]))
 
 all_fittedenergy <- rbind(data.frame(model = 'H1', all_fittedenergy1),
                     data.frame(model = 'H2', all_fittedenergy2),
                     data.frame(model = 'H3', all_fittedenergy3))
 
 
+# Get fitted slopes and their CIs -----------------------------------------
+
+get_fitted_slope_quant <- function(fit, parnames, pdf, n, xmin) {
+  # Extract parameters
+  pars <- as.data.frame(do.call('cbind', extract(fit, parnames)))
+  # Get the number of individuals and the minimum value from the original data
+  # Calculate fitted values
+  fitted <- n * pmap_dfc(pars, pdf, x = x_pred, xmin = xmin)
+  
+  # Function to get log slope
+  log_slope <- function(x, y) (x[-1]/y[-1]) * diff(y)/diff(x)
+  
+  fitted_slopes <- map_dfr(as.data.frame(fitted), ~ log_slope(x_pred, .))
+  
+  # Get quantiles of fitted values
+  qprobs <- c(0.025, 0.5, 0.975)
+  fittedslopequant <- t(apply(fitted_slopes, 1, quantile, probs = qprobs))
+  # Make fitted value df
+  data.frame(x = x_pred[-length(x_pred)] + diff(x_pred)/2, fittedslopequant) %>%
+    setNames(c('x','q025','q50','q975'))
+}
+
+all_fittedslope1 <- all_fits_mod1 %>%
+  group_by(siteID, year) %>%
+  do(get_fitted_slope_quant(.$fit[[1]], parnames1, pdf_mod1, 
+                             n = n_individuals$n[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]],
+                             xmin = n_individuals$xmin[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]]))
+
+all_fittedslope2 <- all_fits_mod2 %>%
+  group_by(siteID, year) %>%
+  do(get_fitted_slope_quant(.$fit[[1]], parnames2, pdf_mod2, 
+                             n = n_individuals$n[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]],
+                             xmin = n_individuals$xmin[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]]))
+
+all_fittedslope3 <- all_fits_mod3 %>%
+  group_by(siteID, year) %>%
+  do(get_fitted_slope_quant(.$fit[[1]], parnames3, pdf_mod3, 
+                             n = n_individuals$n[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]],
+                             xmin = n_individuals$xmin[n_individuals$siteID==.$siteID[1] & n_individuals$year==.$year[1]]))
+
+all_fittedslope <- rbind(data.frame(model = 'H1', all_fittedslope1),
+                          data.frame(model = 'H2', all_fittedslope2),
+                          data.frame(model = 'H3', all_fittedslope3))
+
 # Save results ------------------------------------------------------------
 
-save(all_pars, all_fitted, all_fittedenergy, all_loo, file = '~/google_drive/NEON_EAGER/Manuscript5_RodentEE/Data/modelfitstats2016.RData')
+save(all_pars, all_fitted, all_fittedenergy, all_fittedslope, all_loo, file = '~/google_drive/NEON_EAGER/Manuscript5_RodentEE/Data/modelfitstats2016.RData')
 
-# Plot of function fits ---------------------------------------------------
+
+# Determine best model at each site ---------------------------------------
+
+load('~/google_drive/NEON_EAGER/Manuscript5_RodentEE/Data/modelfitstats2016.RData')
 
 library(ggplot2)
-
-ggplot(mass_bins %>% filter(bin_value > 0, year == 2016, siteID %in% mammal2016$siteID)) +
-  facet_wrap(~ siteID) +
-  geom_ribbon(aes(x = x, ymin = q025, ymax = q975, fill = model, group = model), data = all_fitted, alpha = 0.6) +
-  geom_point(aes(x = bin_midpoint, y = bin_value)) +
-  geom_line(aes(x = x, y = q50, color = model, group = model), data = all_fitted) +
-  scale_x_log10(name = 'Mass (g)') + scale_y_log10(name = 'Density (individuals/g)') +
-  theme_bw()
-
-# Plot of information criteria --------------------------------------------
-
-all_loo <- all_loo %>%
-  group_by(siteID, year) %>%
-  mutate(deltaLOOIC = LOOIC - min(LOOIC))
-
-ggplot(all_loo, aes(x=model, y=deltaLOOIC, ymin=deltaLOOIC-se_LOOIC, ymax=deltaLOOIC+se_LOOIC)) +
-  facet_wrap(~ siteID) +
-  geom_errorbar(width = 0.3) +
-  geom_point() +
-  scale_y_reverse() +
-  theme_bw()
-
-
-# Plot of slopes, given best model ----------------------------------------
+library(dplyr)
 
 # Decision rule for best model
 
@@ -341,8 +404,95 @@ ggplot(all_loo, aes(x=model, y=deltaLOOIC, ymin=deltaLOOIC-se_LOOIC, ymax=deltaL
 
 # Select best model for each site by finding simplest model from the group of non overlapping models
 
-library(reshape2)
+get_best_model <- function(dat) {
+  # remove a model from list of best models if its interval is entirely worse than any other model
+  dat <- dat %>%
+    arrange(model) %>%
+    mutate(min = LOOIC - se_LOOIC, max = LOOIC + se_LOOIC)
+  best_models <- 1:3
+  for (i in 1:3) {
+    if (any(dat$min[i] > dat$max[-i])) {
+      best_models <- best_models[best_models != i]
+    }
+  }
+  # return the lowest number from remaining list
+  return(data.frame(best = min(best_models)))
+}
 
-all_loo %>%
-  ungroup %>%
-  dcast(siteID + year ~ model, value.var = c('LOOIC', 'se_LOOIC'))
+all_best <- all_loo %>%
+  do(get_best_model(.))
+
+
+# Plot of function fits ---------------------------------------------------
+
+
+# Limit the plots to the range of the data at each site
+all_fitted_toplot <- all_fitted %>%
+  left_join(n_individuals) %>%
+  filter(x >= xmin & x <= xmax)
+
+all_fittedenergy_toplot <- all_fittedenergy %>%
+  left_join(n_individuals) %>%
+  filter(x >= xmin & x <= xmax)
+
+p_massbin <- ggplot(mass_bins %>% 
+         filter(bin_value > 0, year == 2016, siteID %in% mammal2016$siteID) %>%
+         left_join(all_best)) +
+  facet_wrap(~ siteID) +
+  geom_ribbon(aes(x = x, ymin = q025, ymax = q975, fill = model, group = model), data = all_fitted_toplot, alpha = 0.6) +
+  geom_point(aes(x = bin_midpoint, y = bin_value)) +
+  geom_line(aes(x = x, y = q50, color = model, group = model), data = all_fitted_toplot) +
+  geom_text(aes(x = 30, y = 1e-3, label = paste0('Best model: H', best))) +
+  scale_x_log10(name = 'Mass (g)') + scale_y_log10(name = 'Density (individuals/g)') +
+  theme_bw()
+
+p_energybin <- ggplot(energy_bins %>% 
+         filter(bin_value > 0, year == 2016, siteID %in% mammal2016$siteID) %>%
+         left_join(all_best)) +
+  facet_wrap(~ siteID) +
+  geom_ribbon(aes(x = x, ymin = q025, ymax = q975, fill = model, group = model), data = all_fittedenergy_toplot, alpha = 0.6) +
+  geom_point(aes(x = bin_midpoint, y = bin_value)) +
+  geom_line(aes(x = x, y = q50, color = model, group = model), data = all_fittedenergy_toplot) +
+  geom_text(aes(x = 30, y = 5e-2, label = paste0('Best model: H', best))) +
+  scale_x_log10(name = 'Mass (g)') + scale_y_log10(name = 'Relative energy (per g)') +
+  theme_bw()
+
+# Plot of information criteria --------------------------------------------
+
+all_loo <- all_loo %>%
+  group_by(siteID, year) %>%
+  mutate(deltaLOOIC = LOOIC - min(LOOIC))
+
+p_looic <- ggplot(all_loo, aes(x=model, y=deltaLOOIC, ymin=deltaLOOIC-se_LOOIC, ymax=deltaLOOIC+se_LOOIC)) +
+  facet_wrap(~ siteID) +
+  geom_errorbar(width = 0.3) +
+  geom_point() +
+  scale_y_reverse() +
+  theme_bw()
+
+
+# Plot of slopes, given best model ----------------------------------------
+
+# Fitted energy slopes
+
+p_slopes <- all_fittedslope %>%
+  left_join(all_best) %>%
+  filter(paste0('H',best)==model) %>%
+  mutate_at(vars(starts_with('q')), funs(.+0.75)) %>%
+  ggplot(aes(x = x, y = q50, ymin = q025, ymax = q975)) +
+    facet_wrap(~ siteID) +
+    geom_hline(yintercept = 0, linetype = 'dotted', color = 'red', size = 1.2) +
+    geom_ribbon(alpha = 0.6) +
+    geom_line() +
+    scale_x_log10(name = 'Mass (g)') + scale_y_continuous(name = 'Fitted energy slope') + 
+    theme_bw()
+
+
+# Save pdfs ---------------------------------------------------------------
+
+pdf('~/google_drive/NEON_EAGER/Manuscript5_RodentEE/Analyses/threemodelfits.pdf', height = 9, width = 9)
+  p_looic + ggtitle('Information criteria')
+  p_massbin + ggtitle('Fits to mass')
+  p_energybin + ggtitle('Fits to energy')
+  p_slopes + ggtitle('Fitted slopes')
+dev.off()
