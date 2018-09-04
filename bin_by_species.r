@@ -73,7 +73,7 @@ n_individuals <- mammal_data %>%
   group_by(siteID, year) %>%
   summarize(n = n())
 
-mammal_bin_avgs %>%
+p_by_bin <- mammal_bin_avgs %>%
   left_join(n_individuals) %>%
   filter(year == 2016, n >= 100) %>%
 ggplot(aes(x = bin_midpoint, y = bin_sp_avg_relativeEnergy)) +
@@ -83,7 +83,7 @@ ggplot(aes(x = bin_midpoint, y = bin_sp_avg_relativeEnergy)) +
   theme_bw() +
   ggtitle('Average energy of a species in each log bin')
 
-mammal_sp_sums %>%
+p_by_sp <- mammal_sp_sums %>%
   left_join(n_individuals) %>%
   filter(year == 2016, n >= 100) %>%
 ggplot(aes(x = global_sp_avg_mass, y = site_sp_total_relativeEnergy)) +
@@ -92,3 +92,6 @@ ggplot(aes(x = global_sp_avg_mass, y = site_sp_total_relativeEnergy)) +
   scale_x_log10() + scale_y_log10() +
   theme_bw() +
   ggtitle('Total energy of each species, disregarding bins')
+
+ggsave('~/google_drive/NEON_EAGER/Manuscript5_RodentEE/Analyses/energy_by_species_by_bin.pdf', p_by_bin, height = 8, width = 8)
+ggsave('~/google_drive/NEON_EAGER/Manuscript5_RodentEE/Analyses/energy_by_species.pdf', p_by_sp, height = 8, width = 8)
