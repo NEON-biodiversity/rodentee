@@ -55,7 +55,8 @@ mammal_bin_avgs <- mammal_sp_sums %>%
   ungroup %>%
   group_by(siteID, year, bin) %>%
   summarize(bin_sp_avg_mass = exp(mean(log(site_sp_total_mass))),
-            bin_sp_avg_relativeEnergy = exp(mean(log(site_sp_total_relativeEnergy))))
+            bin_sp_avg_relativeEnergy = exp(mean(log(site_sp_total_relativeEnergy))),
+            bin_richness = length(unique(taxonID)))
 
 # Join the species averages with the actual bin midpoints so they can be plotted
 (bin_midpoints <- bin_bounds[-length(bin_bounds)] + diff(bin_bounds)/2)
