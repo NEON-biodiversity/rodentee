@@ -2,7 +2,7 @@
 # Does not need to be done in parallel for the moment because it runs fairly quickly.
 # QDR/NEON Rodents/31 Aug 2018
 
-
+# Modified 13 Sep: get rid of the non target taxa using NEON taxonomy
 
 # Load and process data ---------------------------------------------------
 
@@ -47,22 +47,7 @@ logbin_setedges <- function(x, y = NULL, bin_edges) {
   
 }
 
-
-mammal_data <- read.csv('~/google_drive/NEON_EAGER/Manuscript5_RodentEE/Data/mammal_reduced.csv', stringsAsFactors = FALSE)
-
-mammal_data <- mammal_data %>%
-  filter(!recapture %in% c('U','Y')) %>% # 
-  mutate(month = month(collectDate), year = year(collectDate)) %>%
-  filter(!is.na(weight)) %>%
-  select(domainID, siteID, plotID, collectDate, month, year, taxonID, lifeStage, weight)
-
-mammal_data <- mammal_data %>%
-  mutate(relativeEnergy = weight ^ 0.75)
-
-range(mammal_data$weight)
-# One is zero so let's get rid of it.
-mammal_data <- filter(mammal_data, weight > 0)
-(weight_range <- range(mammal_data$weight))
+source('load_mammal_data_withimputed.r')
 
 n_bins <- 8
 
@@ -75,22 +60,22 @@ mass_bins <- mammal_data %>%
 
 energy_bins <- mammal_data %>%
   group_by(siteID, year) %>%
-  do(logbin_setedges(x = .$weight, y = .$relativeEnergy, bin_edges = bin_bounds))
+  do(logbin_setedges(x = .$weight, y = .$metabolicRate, bin_edges = bin_bounds))
 
 
-# Look at where there are too few individuals. Get rid of anything less than 100 for now.
+# Look at where there are too few individuals. Get rid of anything less than 50 for now and with less than 4 species.
 n_individuals <- mammal_data %>%
   group_by(siteID, year) %>%
-  summarize(n=n(), xmin = min(weight), xmax = max(weight))
+  summarize(n=n(), site_richness = length(unique(taxonID)), xmin = min(weight), xmax = max(weight))
 
 mammal2016 <- mammal_data %>%
   left_join(n_individuals) %>%
-  filter(n >= 100, year == 2016)
+  filter(n >= 50, site_richness >= 4, year == 2016)
 
 # Sum up total relative energy by site so the fits can be normalized
 total_energy <- mammal2016 %>%
   group_by(siteID, year) %>%
-  summarize(total = sum(relativeEnergy))
+  summarize(total = sum(metabolicRate))
 
 
 # Load stan models --------------------------------------------------------
@@ -125,10 +110,10 @@ init_h3 <- function() {
 # It isn't that long to run so the whole thing can probably be run on a laptop.
 # Just do 2016 for now.
 
-fit_model <- function(dat, mod, ctrl = NULL, init = 'random') {
+fit_model <- function(dat, mod, ctrl = NULL, init = 'random', random_seed = NULL) {
   x <- dat$weight
   standata <<- list(x = x, N = length(x), x_min = min(x), x_max = max(x))
-  random_seed <- strtoi(dat$siteID[1], 36) + dat$year[1] + 101
+  if (is.null(random_seed)) random_seed <- strtoi(dat$siteID[1], 36) + dat$year[1] + 101
   sampling(mod, data = standata, chains = n_chain, iter = n_iter, warmup = n_warm, seed = random_seed, control = ctrl, init = init)
 }
 
@@ -145,14 +130,14 @@ all_fits_mod3 <- mammal2016 %>%
   do(fit = fit_model(., mod = stanmod3, ctrl = list(max_treedepth = 25, adapt_delta = 0.9), init = init_h3))
 
 # Refit some of the models that did not fit well the first time
-bad_mod2 <- c(2,5,12)
-bad_mod3 <- c(15,16,17)
+bad_mod2 <- c(3,6,12)
+bad_mod3 <- c(1,2,16,21,8,15,17)
 
 n_iter <- 10000
 n_warm <- 8000
 
-bad_mod2 <- c(2,12)
-bad_mod3 <- c(16,17)
+bad_mod2 <- c(3)
+bad_mod3 <- c(17)
 
 n_iter <- 20000
 n_warm <- 15000
@@ -160,16 +145,18 @@ n_warm <- 15000
 for (i in bad_mod2) {
   print(i)
   all_fits_mod2$fit[[i]] <- fit_model(dat = mammal2016 %>% filter(siteID == all_fits_mod2$siteID[i], year == all_fits_mod2$year[i]),
-                                      mod = stanmod2)
+                                      mod = stanmod2, random_seed = 444)
 }
 
 
 for (i in bad_mod3) {
   print(i)
   all_fits_mod3$fit[[i]] <- fit_model(dat = mammal2016 %>% filter(siteID == all_fits_mod2$siteID[i], year == all_fits_mod2$year[i]),
-                                      mod = stanmod3)
+                                      mod = stanmod3, ctrl = list(max_treedepth = 25, adapt_delta = 0.9), init = init_h3, random_seed = 333)
 }
 
+summary(all_fits_mod2$fit[[3]])$summary[1:3,]
+mcmc_trace(as.array(all_fits_mod2$fit[[3]]), pars = c('alpha_low', 'alpha_high', 'tau'))
 
 # Get parameter values and CIs --------------------------------------------
 
@@ -289,13 +276,14 @@ all_fitted <- rbind(data.frame(model = 'H1', all_fitted1),
 
 # Function to return *energy* quantiles
 # Must normalize
+# Edit this 13 Sep 2018: now use the more accurate values for energy.
 get_fitted_energy_quant <- function(fit, parnames, pdf, n, xmin, total_e) {
   require(pracma)
   # Extract parameters
   pars <- as.data.frame(do.call('cbind', extract(fit, parnames)))
   # Get the number of individuals and the minimum value from the original data
   # Calculate fitted values
-  fitted <- n * pmap_dfc(pars, pdf, x = x_pred, xmin =xmin) ^ 0.75
+  fitted <- n * 0.02446148 * pmap_dfc(pars, pdf, x = x_pred, xmin =xmin) ^ 0.6777703
   
   # Integrate fitted total energy and multiply total energy fitted values by the 
   # ratio of total observed energy and integral of fitted energy
@@ -420,6 +408,7 @@ get_best_model <- function(dat) {
 }
 
 all_best <- all_loo %>%
+  group_by(siteID, year) %>%
   do(get_best_model(.))
 
 
@@ -429,33 +418,48 @@ all_best <- all_loo %>%
 # Limit the plots to the range of the data at each site
 all_fitted_toplot <- all_fitted %>%
   left_join(n_individuals) %>%
-  filter(x >= xmin & x <= xmax)
+  filter(x >= (0.9*xmin) & x <= (xmax*1.1))
 
 all_fittedenergy_toplot <- all_fittedenergy %>%
   left_join(n_individuals) %>%
-  filter(x >= xmin & x <= xmax)
+  filter(x >= (0.9*xmin) & x <= (xmax*1.1))
+
+best_fitted_toplot <- all_fitted_toplot %>%
+  left_join(all_best) %>%
+  filter(model == paste0('H',best))
+
+best_fittedenergy_toplot <- all_fittedenergy_toplot %>%
+  left_join(all_best) %>%
+  filter(model == paste0('H',best))
+
+model_names <- c('EE','Optimal size', 'Truncated')
+
+th <- theme_bw() +
+  theme(legend.position = 'none', strip.background = element_blank())
 
 p_massbin <- ggplot(mass_bins %>% 
          filter(bin_value > 0, year == 2016, siteID %in% mammal2016$siteID) %>%
          left_join(all_best)) +
   facet_wrap(~ siteID) +
-  geom_ribbon(aes(x = x, ymin = q025, ymax = q975, fill = model, group = model), data = all_fitted_toplot, alpha = 0.6) +
   geom_point(aes(x = bin_midpoint, y = bin_value)) +
-  geom_line(aes(x = x, y = q50, color = model, group = model), data = all_fitted_toplot) +
-  geom_text(aes(x = 30, y = 1e-3, label = paste0('Best model: H', best))) +
+  geom_line(aes(x = x, y = q025, color = model), data = best_fitted_toplot, linetype = 'dotted') +
+  geom_line(aes(x = x, y = q975, color = model), data = best_fitted_toplot, linetype = 'dotted') +
+  geom_line(aes(x = x, y = q50, color = model, group = model), data = best_fitted_toplot, size = 1) +
+  geom_text(aes(x = 30, y = 1e-3, label = model_names[best])) +
   scale_x_log10(name = 'Mass (g)') + scale_y_log10(name = 'Density (individuals/g)') +
-  theme_bw()
+  th
 
 p_energybin <- ggplot(energy_bins %>% 
          filter(bin_value > 0, year == 2016, siteID %in% mammal2016$siteID) %>%
          left_join(all_best)) +
   facet_wrap(~ siteID) +
-  geom_ribbon(aes(x = x, ymin = q025, ymax = q975, fill = model, group = model), data = all_fittedenergy_toplot, alpha = 0.6) +
   geom_point(aes(x = bin_midpoint, y = bin_value)) +
-  geom_line(aes(x = x, y = q50, color = model, group = model), data = all_fittedenergy_toplot) +
-  geom_text(aes(x = 30, y = 5e-2, label = paste0('Best model: H', best))) +
-  scale_x_log10(name = 'Mass (g)') + scale_y_log10(name = 'Relative energy (per g)') +
-  theme_bw()
+  geom_line(aes(x = x, y = q025, color = model), data = best_fittedenergy_toplot, linetype = 'dotted') +
+  geom_line(aes(x = x, y = q975, color = model), data = best_fittedenergy_toplot, linetype = 'dotted') +
+  geom_line(aes(x = x, y = q50, color = model, group = model), data = best_fittedenergy_toplot, size =  1) +
+  geom_text(aes(x = 30, y = 0.001, label = model_names[best])) +
+  scale_x_log10(name = 'Mass (g)') + scale_y_log10(name = 'Metabolic rate (W/g)') +
+  th
 
 # Plot of information criteria --------------------------------------------
 
@@ -467,8 +471,9 @@ p_looic <- ggplot(all_loo, aes(x=model, y=deltaLOOIC, ymin=deltaLOOIC-se_LOOIC, 
   facet_wrap(~ siteID) +
   geom_errorbar(width = 0.3) +
   geom_point() +
-  scale_y_reverse() +
-  theme_bw()
+  scale_y_reverse(name = expression(Delta*LOOIC)) +
+  scale_x_discrete(labels = c('EE','Optimal','Truncated EE')) +
+  th
 
 
 # Plot of slopes, given best model ----------------------------------------
@@ -478,14 +483,15 @@ p_looic <- ggplot(all_loo, aes(x=model, y=deltaLOOIC, ymin=deltaLOOIC-se_LOOIC, 
 p_slopes <- all_fittedslope %>%
   left_join(all_best) %>%
   filter(paste0('H',best)==model) %>%
-  mutate_at(vars(starts_with('q')), funs(.+0.75)) %>%
+  mutate_at(vars(starts_with('q')), funs(.+beta1)) %>%
   ggplot(aes(x = x, y = q50, ymin = q025, ymax = q975)) +
     facet_wrap(~ siteID) +
-    geom_hline(yintercept = 0, linetype = 'dotted', color = 'red', size = 1.2) +
-    geom_ribbon(alpha = 0.6) +
-    geom_line() +
+    geom_hline(yintercept = 0, color = 'red', size = 0.7) +
+    geom_line(aes(y = q025), linetype = 'dotted') +
+    geom_line(aes(y = q975), linetype = 'dotted') +
+    geom_line(size = 1) +
     scale_x_log10(name = 'Mass (g)') + scale_y_continuous(name = 'Fitted energy slope') + 
-    theme_bw()
+    th
 
 
 # Save pdfs ---------------------------------------------------------------

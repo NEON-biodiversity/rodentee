@@ -17,18 +17,18 @@ model_d2p1 <- stan_model('~/Documents/GitHub/forestlight/code/exploratory/model_
 fit_by_species <- function(dat) {
   standata <- with(dat, list(N = length(global_sp_avg_mass),
                              x = global_sp_avg_mass,
-                             y = site_sp_total_relativeEnergy,
+                             y = site_sp_total_metabolicRate,
                              x_min = min(global_sp_avg_mass),
                              x_max = max(global_sp_avg_mass)))
   sampling(model_d2p1, data = standata, iter = 5000, warmup = 4000, chains = 3, pars = c('log_lik_dens', 'log_lik_prod'), include = FALSE)
   
 }
 
-# filter out any site with less than 5 species, and only do 2016.
+# filter out any site with less than 4 species or 50 indiv, and only do 2016.
 # This only takes a few minutes to run for all sites.
 all_fits <- mammal_sp_sums %>%
-  mutate(n_spp = n()) %>%
-  filter(year == 2016, n_spp >= 5) %>%
+  left_join(n_individuals) %>%
+  filter(year == 2016, n >= 50, site_richness >=4) %>%
   do(fit = fit_by_species(.))
 
 # Extract the fitted values and their credible intervals, for plotting.
@@ -48,12 +48,12 @@ x_pred <- exp(seq(log(min(mass_limits)), log(max(mass_limits)), length.out = 51)
 min_n_2016 <- mammal_sp_sums %>%
   filter(year == 2016) %>%
   group_by(siteID) %>%
-  summarize(x_min = min(global_sp_avg_mass), total_energy = sum(site_sp_total_relativeEnergy), n_spp = n())
+  summarize(x_min = min(global_sp_avg_mass), total_energy = sum(site_sp_total_metabolicRate), site_richness = n())
   
 all_fitted <- all_fits %>%
   left_join(min_n_2016) %>%
   group_by(siteID) %>%
-  do(fitted_predicted_values(.$fit[[1]], x_pred, dens_form = 2, prod_form = 1, x_min = .$x_min[1], n_indiv = .$n_spp[1], total_prod = .$total_energy[1], pars_to_get = parnames))
+  do(fitted_predicted_values(.$fit[[1]], x_pred, dens_form = 2, prod_form = 1, x_min = .$x_min[1], n_indiv = .$site_richness[1], total_prod = .$total_energy[1], pars_to_get = parnames))
 
 # Edit fitted value data frame to change the names from the BCI names to mammal names
 names(all_fitted)[2] <- 'mass'
@@ -128,7 +128,7 @@ ggplot(all_fitted %>% filter(siteID %in% c('BART','BLAN','CLBJ')), aes(x = mass)
   geom_point(data = mammal_sp_sums %>%
                mutate(variable = 'energy per species') %>%
                filter(year == 2016, siteID %in% c('BART','BLAN','CLBJ')),
-             aes(x = global_sp_avg_mass, y = site_sp_total_relativeEnergy)) +
+             aes(x = global_sp_avg_mass, y = site_sp_total_metabolicRate)) +
   geom_point(data = richness_logbins %>%
                mutate(variable = 'richness per size') %>%
                filter(year == 2016, bin_value > 0, siteID %in% c('BART','BLAN','CLBJ')),
@@ -155,7 +155,7 @@ ggplot(all_fitted, aes(x = mass)) +
   geom_point(data = mammal_sp_sums %>%
                mutate(variable = factor('energy per species')) %>%
                filter(year == 2016, siteID %in% all_fits$siteID),
-             aes(x = global_sp_avg_mass, y = site_sp_total_relativeEnergy)) +
+             aes(x = global_sp_avg_mass, y = site_sp_total_metabolicRate)) +
   geom_point(data = richness_logbins %>%
                mutate(variable = factor('richness per size')) %>%
                filter(year == 2016, bin_value > 0, siteID %in% all_fits$siteID),
