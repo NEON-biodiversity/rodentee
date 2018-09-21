@@ -16,16 +16,14 @@ library(lubridate)
 options(mc.cores = 3)
 rstan_options(auto_write = TRUE)
 
+# Standard logbinning algorithm to give the same boundaries to every site
 logbin_setedges <- function(x, y = NULL, bin_edges) {
   logx <- log10(x)                                           # log transform x value (biomass)
   bin_edges <- log10(bin_edges)
   n <- length(bin_edges) - 1
-  logxbin <- rep(NA, length(logx))                           # create data structure to assign trees to bins
-  b <- bin_edges                                             # add a little to the biggest bin temporarily
-  b[length(b)] <- b[length(b)] + 1                           # (so that the biggest single tree is put in a bin)
-  for (i in 1:length(logx)) {
-    logxbin[i] <- sum(logx[i] >= b)                          # assign each tree to a bin
-  }
+  
+  logxbin <- findInterval(logx, bin_edges, rightmost.closed = TRUE) # assign each individual to a bin
+  
   bin_midpoints <- 10^(bin_edges[-1] - diff(bin_edges)/2)
   bin_widths <- diff(10^bin_edges)                              # get linear width of each bin
   bin_factor <- factor(logxbin, levels=1:n)                  # convert bin to factor (required to deal with zeroes if present)
@@ -47,20 +45,50 @@ logbin_setedges <- function(x, y = NULL, bin_edges) {
   
 }
 
+# New logbinning algorithm to give different ones to every site
+logbin_split <- function(x, y = NULL, bin_edges) {
+  logx <- log10(x)                                           # log transform x value (biomass)
+  bin_edges <- log10(bin_edges)
+  
+  logxbin <- findInterval(logx, bin_edges, rightmost.closed = TRUE) # assign each individual to a bin
+  
+  n <- length(bin_edges) - 1 # Desired number of nonzero bins
+  
+  # While loop to keep splitting the biggest bin in half until we get n nonzero bins
+  while(length(unique(logxbin)) < n) {
+    uniquebin <- unique(logxbin)
+    n_mode <- uniquebin[which.max(tabulate(match(logxbin, uniquebin)))] # Which logbin is the mode (most individuals)?
+    # Add a midpoint in the middle of that bin.
+    bin_edges <- c(bin_edges[1:n_mode], mean(bin_edges[n_mode:(n_mode+1)]), bin_edges[(n_mode+1):length(bin_edges)])
+    logxbin <- findInterval(logx, bin_edges, rightmost.closed = TRUE)
+  }
+  
+  n <- length(bin_edges) - 1 # New n
+  
+  bin_midpoints <- 10^(bin_edges[-1] - diff(bin_edges)/2)
+  bin_widths <- diff(10^bin_edges)                              # get linear width of each bin
+  bin_factor <- factor(logxbin, levels=1:n)                  # convert bin to factor (required to deal with zeroes if present)
+  bin_counts <- table(bin_factor)                            # find number of individuals in each bin
+  if (!is.null(y)) {
+    rawy <- tapply(y, bin_factor, sum)                       # sum y value (production) in each bin
+    rawy[is.na(rawy)] <- 0                                   # add zeroes back in if present
+    bin_values <- as.numeric(rawy/bin_widths)                # divide production by width for each bin 
+  }
+  else {
+    bin_values <- as.numeric(bin_counts/bin_widths)          # 1-dimensional case.
+  }
+  
+  return(data.frame(bin_midpoint = bin_midpoints,            # return result!
+                    bin_value = bin_values,                  # also add bin min and max for bar plot purposes
+                    bin_count = as.numeric(bin_counts),
+                    bin_min = 10^bin_edges[1:n],
+                    bin_max = 10^bin_edges[2:(n+1)]))
+}
+
+
 source('load_mammal_data_withimputed.r')
 
-n_bins <- 8
 
-# If we did 8 bins these would be the bin bounds.
-(bin_bounds <- exp(seq(log(weight_range[1]), log(weight_range[2]), length.out = n_bins + 1)))
-
-mass_bins <- mammal_data %>%
-  group_by(siteID, year) %>%
-  do(logbin_setedges(x = .$weight, bin_edges = bin_bounds))
-
-energy_bins <- mammal_data %>%
-  group_by(siteID, year) %>%
-  do(logbin_setedges(x = .$weight, y = .$metabolicRate, bin_edges = bin_bounds))
 
 
 # Look at where there are too few individuals. Get rid of anything less than 50 for now and with less than 4 species.
@@ -76,6 +104,21 @@ mammal2016 <- mammal_data %>%
 total_energy <- mammal2016 %>%
   group_by(siteID, year) %>%
   summarize(total = sum(metabolicRate))
+
+# bin up the mass and energy. 
+# Modification 21 Sep: Use 10 bins and use the new binning algorithm.
+n_bins <- 10
+(mass_range <- range(mammal2016$weight))
+
+(bin_bounds <- exp(seq(log(mass_range[1]), log(mass_range[2]), length.out = n_bins + 1)))
+
+mass_bins <- mammal2016 %>%
+  group_by(siteID, year) %>%
+  do(logbin_split(x = .$weight, bin_edges = bin_bounds))
+
+energy_bins <- mammal2016 %>%
+  group_by(siteID, year) %>%
+  do(logbin_split(x = .$weight, y = .$metabolicRate, bin_edges = bin_bounds))
 
 
 # Load stan models --------------------------------------------------------
@@ -438,7 +481,7 @@ th <- theme_bw() +
   theme(legend.position = 'none', strip.background = element_blank())
 
 p_massbin <- ggplot(mass_bins %>% 
-         filter(bin_value > 0, year == 2016, siteID %in% mammal2016$siteID) %>%
+         filter(bin_value > 0) %>%
          left_join(all_best)) +
   facet_wrap(~ siteID) +
   geom_point(aes(x = bin_midpoint, y = bin_value)) +
@@ -450,7 +493,7 @@ p_massbin <- ggplot(mass_bins %>%
   th
 
 p_energybin <- ggplot(energy_bins %>% 
-         filter(bin_value > 0, year == 2016, siteID %in% mammal2016$siteID) %>%
+         filter(bin_value > 0) %>%
          left_join(all_best)) +
   facet_wrap(~ siteID) +
   geom_point(aes(x = bin_midpoint, y = bin_value)) +
